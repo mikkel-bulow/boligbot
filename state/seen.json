@@ -1,0 +1,66 @@
+{
+ "last_error_mail": {},
+ "listings": {
+  "https://cityapartment.dk/da/cityapartments/bronzehoejen-30/": {
+   "adresse": "Bronzehøjen 14",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Cityapartment"
+  },
+  "https://cityapartment.dk/da/cityapartments/fuglevangsvej-10-2-lej-24/": {
+   "adresse": "Fuglevangsvej 10, 2. Lej. 24",
+   "forsoegt": "2026-11-26T13:25+00:00",
+   "fundet": "2026-11-26T13:25+00:00",
+   "status": "proeve",
+   "udlejer": "Cityapartment"
+  },
+  "https://cityapartment.dk/da/cityapartments/kildevej-12-2-tv/": {
+   "adresse": "Kildevej 12, 2. Tv.",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Cityapartment"
+  },
+  "https://cityapartment.dk/da/cityapartments/saxovej-75e-st-3/": {
+   "adresse": "Saxovej 75 A-L",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Cityapartment"
+  },
+  "https://cityapartment.dk/da/cityapartments/stockholmsgade-49-st/": {
+   "adresse": "Stockholmsgade 49, St.",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Cityapartment"
+  },
+  "https://cityapartment.dk/da/cityapartments/turesensgade-33-1-tv/": {
+   "adresse": "Turesensgade 33, 1. Tv.",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Cityapartment"
+  },
+  "https://kereby.dk/bolig/jagtvej-183-1-tv-2100-kobenhavn/": {
+   "adresse": "Jagtvej 183, 1. tv, 2100 København Ø",
+   "fundet": "2026-11-26T13:25+00:00",
+   "udlejer": "Kereby"
+  },
+  "https://www.taurus.dk/boligudlejning/lejebolig/?id=12755": {
+   "adresse": "Bolig (Frederiksberg)",
+   "fundet": "2026-11-26T13:25+00:00",
+   "status": "mail",
+   "udlejer": "Taurus"
+  },
+  "https://www.taurus.dk/boligudlejning/lejebolig/?id=28407": {
+   "adresse": "Toldbodgade (København K)",
+   "fundet": "2026-11-26T13:25+00:00",
+   "status": "mail",
+   "udlejer": "Taurus"
+  },
+  "https://www.taurus.dk/boligudlejning/lejebolig/?id=28432": {
+   "adresse": "Udsigt over Rådhuspladsen (København V)",
+   "fundet": "2026-11-26T13:25+00:00",
+   "status": "mail",
+   "udlejer": "Taurus"
+  },
+  "https://www.taurus.dk/boligudlejning/lejebolig/?id=28893": {
+   "adresse": "Bolig (Frederiksberg)",
+   "fundet": "2026-11-26T13:25+00:00",
+   "status": "mail",
+   "udlejer": "Taurus"
+  }
+ }
+}
