@@ -241,6 +241,34 @@ def enrich_rooms_from_detail(page, item):
         log("kunne ikke læse detaljer", item["url"], e)
 
 
+def enrich_taurus(page, item):
+    """Hent fuld adresse, postnr. og kontaktperson fra Taurus' boligside. Returnér kontakt-tekst."""
+    try:
+        goto(page, item["url"])
+        txt = page.inner_text("body")
+        m = re.search(r"([A-ZÆØÅ][A-Za-zÆØÅæøåéü'\. ]{2,40}\s\d+[A-Za-z]?(?:,\s*[^\n,]{1,20})?)\s*,?\s*\n?\s*"
+                      r"(\d{4})\s+(København|Frederiksberg)", txt)
+        if m:
+            item["adresse"] = m.group(1).strip()
+            item["postnr"] = int(m.group(2))
+        mails = re.findall(r"[\w\.-]+@taurus\.dk", txt)
+        mail = next((x for x in mails if not x.lower().startswith(("info", "udlejning", "kundeservice"))),
+                    mails[0] if mails else None)
+        if not mail:
+            return None
+        navn = None
+        i = txt.find(mail)
+        before = [l.strip() for l in txt[max(0, i - 300):i].splitlines() if l.strip()]
+        for l in reversed(before):
+            if re.fullmatch(r"[A-ZÆØÅ][a-zæøåé]+(?: [A-ZÆØÅ][a-zæøåé\-]+){1,3}", l):
+                navn = l
+                break
+        return f"{navn} ({mail})" if navn else mail
+    except Exception as e:
+        log("kunne ikke læse Taurus-side", item["url"], e)
+        return None
+
+
 # ---------------------------------------------------------------- forms
 
 def find_form(page, key_texts):
@@ -302,9 +330,26 @@ def check_consent(scope):
                 pass
 
 
+def visible_captcha(page):
+    """Sand kun for en CAPTCHA man skal klikke på. Usynlig reCAPTCHA (size=invisible / v3) tæller ikke."""
+    c = page.locator(CAPTCHA_SEL)
+    for i in range(c.count()):
+        el = c.nth(i)
+        try:
+            src = (el.get_attribute("src") or "")
+            if "size=invisible" in src:
+                continue
+            box = el.bounding_box()
+            if el.is_visible() and box and box["width"] > 60 and box["height"] > 40:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def submit_form(page, scope):
-    if page.locator(CAPTCHA_SEL).count():
-        return "captcha", "Formularen har en CAPTCHA – ikke sendt."
+    if visible_captcha(page):
+        return "captcha", "Formularen har en CAPTCHA, man skal klikke på – ikke sendt."
     btn = scope.locator('button[type="submit"], input[type="submit"]')
     if not btn.count():
         btn = scope.get_by_role("button", name=re.compile(r"send|book|tilmeld", re.I))
@@ -447,9 +492,17 @@ def main():
             L.setdefault(key, {"fundet": now, **{k: item[k] for k in ("udlejer", "adresse")}})
 
             if item["udlejer"] == "Taurus":
-                if first_seen:
-                    L[key]["status"] = "mail"
-                    report.append((item, "taurus", "Taurus har ingen formular – skriv til kontaktpersonen på boligsiden."))
+                if not first_seen:
+                    continue
+                L[key]["status"] = "set"
+                if item["husleje"] and item["husleje"] > CFG["max_husleje"]:
+                    continue
+                if item["vaerelser"] and item["vaerelser"] < CFG["min_vaerelser"]:
+                    continue
+                kontakt = enrich_taurus(page, item)
+                L[key].update(adresse=item["adresse"], status="mail")
+                report.append((item, "taurus", "Taurus har ingen formular – skriv til " +
+                               (kontakt or "kontaktpersonen på boligsiden") + "."))
                 continue
 
             if item["status"]:
