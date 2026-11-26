@@ -26,7 +26,13 @@ URLS = {
     "Kereby": os.getenv("KEREBY_URL", "https://kereby.dk/bolig/"),
     "Cityapartment": os.getenv("CITY_URL", "https://cityapartment.dk/da/lejeboliger-koebenhavn/"),
     "Taurus": os.getenv("TAURUS_URL", "https://www.taurus.dk/boligudlejning/ledige-lejemal/"),
+    "Wanamove": [u for u in os.getenv("WANAMOVE_URLS", "https://wanamove.dk/ https://wanamove.dk/for-udlejer/4-boliger/").split()],
 }
+# Bydele uden for dine områder – bruges til at skelne "forkert område" fra "ukendt område" hos Wanamove
+ANDRE_BYDELE = ["valby", "vanløse", "brønshøj", "nordvest", "bispebjerg", "amager", "sydhavn", "københavn s",
+                "kbh s", "københavn sv", "københavn nv", "islands brygge", "ørestad", "hellerup", "gentofte",
+                "husum", "rødovre", "hvidovre", "herlev", "glostrup", "lyngby", "kastrup", "tårnby", "albertslund",
+                "ballerup", "brøndby", "aarhus", "odense", "aalborg"]
 
 CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 DRY_RUN = str(os.getenv("DRY_RUN", CFG.get("dry_run", True))).lower() in ("1", "true", "yes")
@@ -224,6 +230,54 @@ def scrape_taurus(page):
                         postnr=None, husleje=to_int(m_rent.group(1)) if m_rent else None,
                         vaerelser=int(m_rooms.group(1)) if m_rooms else None, m2=None,
                         status="", ledig_fra=""))
+    return res
+
+
+def scrape_wanamove(page):
+    res, seen = [], set()
+    for url in URLS["Wanamove"]:
+        try:
+            goto(page, url)
+            page.wait_for_selector("article.m-productlist-item", timeout=15000)
+        except Exception as e:
+            log("Wanamove: ingen boliger på", url, e.__class__.__name__)
+            continue
+        arts = page.locator("article.m-productlist-item")
+        for i in range(arts.count()):
+            a = arts.nth(i)
+            try:
+                link = a.locator("a.m-productlist-link").first.evaluate("e => e.href")
+                if link in seen:
+                    continue
+                seen.add(link)
+                title = a.locator(".m-productlist-title").first.inner_text().strip()
+                txt = a.inner_text()
+                soldout = a.locator(".m-productlist-soldout").count() > 0 or "udsolgt" in txt.lower()
+            except Exception:
+                continue
+            m_rent = re.search(r"([\d\.]{4,}),-\s*(?:/\s*md|pr)", txt, re.I)
+            m_aconto = re.search(r"a conto[^\d]*([\d\.]+)", txt, re.I)
+            m_rooms = re.search(r"(\d+)\s*vær", txt, re.I) or re.match(r"(\d)V\b", title)
+            m_m2 = re.search(r"(\d+)\s*kvm", txt, re.I)
+            m_frist = re.search(r"frist\s*(\d{4}-\d{2}-\d{2})", txt, re.I)
+            m_billet = re.search(r"(\d+,\d{2})\s*DKK", txt)
+            low = (title + " " + txt).lower()
+            bydel = next((b for b in CFG.get("wanamove_bydele", []) if b.lower() in low), None)
+            if not bydel and any(b in low for b in ANDRE_BYDELE):
+                bydel = "UDENFOR"
+            ekstra = []
+            if m_aconto:
+                ekstra.append(f"a conto {m_aconto.group(1)} kr")
+            if m_frist:
+                ekstra.append(f"ansøgningsfrist {m_frist.group(1)}")
+            if m_billet:
+                ekstra.append(f"ansøgning koster {m_billet.group(1)} kr")
+            res.append(dict(udlejer="Wanamove", url=link, adresse=title, postnr=None,
+                            husleje=to_int(m_rent.group(1)) if m_rent else None,
+                            vaerelser=int(m_rooms.group(1)) if m_rooms else None,
+                            m2=int(m_m2.group(1)) if m_m2 else None,
+                            status="Udsolgt" if soldout else "", ledig_fra="",
+                            bydel=bydel, ekstra=", ".join(ekstra)))
     return res
 
 
@@ -473,7 +527,8 @@ def main():
         page = ctx.new_page()
 
         listings = []
-        for name, fn in [("Kereby", scrape_kereby), ("Cityapartment", scrape_city), ("Taurus", scrape_taurus)]:
+        for name, fn in [("Kereby", scrape_kereby), ("Cityapartment", scrape_city), ("Taurus", scrape_taurus),
+                         ("Wanamove", scrape_wanamove)]:
             try:
                 got = fn(page)
                 log(f"{name}: {len(got)} boliger fundet")
@@ -490,6 +545,27 @@ def main():
             prev = L.get(key, {})
             first_seen = key not in L
             L.setdefault(key, {"fundet": now, **{k: item[k] for k in ("udlejer", "adresse")}})
+
+            if item["udlejer"] == "Wanamove":
+                if not first_seen or item["status"]:
+                    if item["status"] and first_seen:
+                        L[key]["status"] = "udsolgt"
+                    continue
+                L[key]["status"] = "set"
+                if item["bydel"] == "UDENFOR":
+                    continue
+                if item["husleje"] and item["husleje"] > CFG["max_husleje"]:
+                    continue
+                if item["vaerelser"] and item["vaerelser"] < CFG["min_vaerelser"]:
+                    continue
+                L[key]["status"] = "mail"
+                note = "Man skriver sig ikke op hos Wanamove – køb en ansøgning på boligsiden."
+                if not item["bydel"]:
+                    note += " Bydelen kunne ikke genkendes, så tjek selv om den passer."
+                if item["ekstra"]:
+                    note = item["ekstra"].capitalize() + ". " + note
+                report.append((item, "wanamove", note))
+                continue
 
             if item["udlejer"] == "Taurus":
                 if not first_seen:
@@ -547,6 +623,7 @@ def main():
         labels = {"tilmeldt": "✅ Tilmeldt fremvisning", "usikker": "⚠️ Sendt – ikke bekræftet",
                   "proeve": "🧪 Prøvekørsel (ikke sendt)", "captcha": "⛔ CAPTCHA – tilmeld dig selv",
                   "fejl": "⛔ Fejl – tilmeld dig selv", "taurus": "📬 Ny hos Taurus",
+                  "wanamove": "📬 Ny hos Wanamove",
                   "ukendt": "❔ Ny – tjek selv"}
         n_ok = sum(1 for _, s, _ in report if s == "tilmeldt")
         subject = (f"Boligbot: tilmeldt {n_ok} fremvisning(er)" if n_ok else

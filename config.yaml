@@ -23,5 +23,23 @@ taurus_bydele:
   - "København Ø"
   - "Frederiksberg"
 
+# Wanamove: man køber en ansøgning, så du får kun en mail om nye boliger.
+# Samme pris- og værelsesgrænse som ovenfor. Bydele genkendes på navn:
+wanamove_bydele:
+  - "Indre By"
+  - "København K"
+  - "Kbh K"
+  - "Christianshavn"
+  - "Vesterbro"
+  - "København V"
+  - "Kbh V"
+  - "Frederiksberg"
+  - "Nørrebro"
+  - "København N"
+  - "Kbh N"
+  - "Østerbro"
+  - "København Ø"
+  - "Kbh Ø"
+
 # Sikkerhedsgrænse: højst så mange tilmeldinger pr. kørsel
 max_tilmeldinger_pr_koersel: 3
