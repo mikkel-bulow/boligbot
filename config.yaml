@@ -2,7 +2,7 @@
 
 # true = udfyld formularen og tag et skærmbillede, men tryk IKKE send.
 # Sæt til false, når du har set prøve-mailen og er tilfreds.
-dry_run: true
+dry_run: false
 
 # Postnumre der skrives op til automatisk.
 # K + Christianshavn (1000-1499), V (1500-1799), Frederiksberg (1800-2000), Ø (2100, 2150), N (2200)
