@@ -38,6 +38,30 @@
    "fundet": "2026-11-26T13:25+00:00",
    "udlejer": "Kereby"
   },
+  "https://wanamove.dk/for-udlejer/4-boliger/325-balders-pl-paris-paa-noerrebro-kbh/": {
+   "adresse": "Balders Pl., Paris på Nørrebro, Kbh",
+   "fundet": "2026-11-26T15:34+00:00",
+   "status": "udsolgt",
+   "udlejer": "Wanamove"
+  },
+  "https://wanamove.dk/for-udlejer/4-boliger/327-2v-valby-roligt-kvarter/": {
+   "adresse": "2V, Valby, roligt kvarter",
+   "fundet": "2026-11-26T15:34+00:00",
+   "status": "udsolgt",
+   "udlejer": "Wanamove"
+  },
+  "https://wanamove.dk/for-udlejer/4-boliger/328-bragesgade-3er-paa-noerrebro/": {
+   "adresse": "Bragesgade, 3er på Nørrebro",
+   "fundet": "2026-11-26T15:34+00:00",
+   "status": "udsolgt",
+   "udlejer": "Wanamove"
+  },
+  "https://wanamove.dk/for-udlejer/4-boliger/329-3v-aegirsgade-noerrebro/": {
+   "adresse": "3V, Ægirsgade, Nørrebro",
+   "fundet": "2026-11-26T15:34+00:00",
+   "status": "mail",
+   "udlejer": "Wanamove"
+  },
   "https://www.taurus.dk/boligudlejning/lejebolig/?id=12755": {
    "adresse": "Bolig (Frederiksberg)",
    "fundet": "2026-11-26T13:25+00:00",
