@@ -41,5 +41,11 @@ wanamove_bydele:
   - "København Ø"
   - "Kbh Ø"
 
+# Automatisk tilmelding pr. udlejer. Cityapartment afviser robotter (reCAPTCHA v3),
+# så dér får du kun en mail med det samme og skriver dig selv op.
+auto_tilmelding:
+  Kereby: true
+  Cityapartment: false
+
 # Sikkerhedsgrænse: højst så mange tilmeldinger pr. kørsel
 max_tilmeldinger_pr_koersel: 3

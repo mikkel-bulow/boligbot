@@ -415,6 +415,8 @@ def submit_form(page, scope):
     if page.locator(CAPTCHA_CHALLENGE_SEL).count() and page.locator(CAPTCHA_CHALLENGE_SEL).first.is_visible():
         return "captcha", "Der kom en CAPTCHA-udfordring efter tryk på send."
     after = page.inner_text("body").lower()
+    if re.search(r"recaptcha.{0,40}(mislykkedes|failed)|submission failed|uautoriseret", after):
+        return "captcha", "Siden afviste tilmeldingen (reCAPTCHA) – tilmeld dig selv via linket."
     if any(w in after and w not in before for w in SUCCESS_WORDS):
         return "tilmeldt", "Formularen er sendt, og siden bekræftede det."
     return "usikker", "Formularen er sendt, men siden viste ingen tydelig bekræftelse – tjek skærmbilledet."
@@ -602,6 +604,12 @@ def main():
                 continue
             if item["vaerelser"] < CFG["min_vaerelser"]:
                 continue
+            if not CFG.get("auto_tilmelding", {}).get(item["udlejer"], True):
+                if prev.get("status") != "mail":
+                    L[key].update(status="mail", forsoegt=now)
+                    report.append((item, "selv", f"{item['udlejer']} afviser automatisk tilmelding – "
+                                   "klik på linket og tryk \"Book fremvisning\" hurtigst muligt."))
+                continue
             if booked >= CFG["max_tilmeldinger_pr_koersel"]:
                 log("Sikkerhedsgrænse nået; resten tages i næste kørsel")
                 break
@@ -624,9 +632,12 @@ def main():
                   "proeve": "🧪 Prøvekørsel (ikke sendt)", "captcha": "⛔ CAPTCHA – tilmeld dig selv",
                   "fejl": "⛔ Fejl – tilmeld dig selv", "taurus": "📬 Ny hos Taurus",
                   "wanamove": "📬 Ny hos Wanamove",
+                  "selv": "🔔 Ny – tilmeld dig selv nu",
                   "ukendt": "❔ Ny – tjek selv"}
         n_ok = sum(1 for _, s, _ in report if s == "tilmeldt")
+        n_selv = sum(1 for _, s_, _ in report if s_ in ("selv", "captcha", "fejl", "usikker"))
         subject = (f"Boligbot: tilmeldt {n_ok} fremvisning(er)" if n_ok else
+                   f"Boligbot: ny bolig – tilmeld dig selv nu ({report[0][0]['adresse']})" if n_selv else
                    f"Boligbot: {len(report)} ny(e) bolig(er)") + (" [prøvekørsel]" if DRY_RUN else "")
         html, txt = [], []
         for it, s, m in report:
