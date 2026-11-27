@@ -26,8 +26,13 @@ jobs:
 
       - name: Installer
         run: |
-          pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
+          # Prøv op til 3 gange, så et kortvarigt netværksbump ikke får kørslen til at fejle
+          for i in 1 2 3; do
+            pip install -r requirements.txt && python -m playwright install --with-deps chromium && break
+            if [ "$i" = 3 ]; then exit 1; fi
+            echo "Installationen fejlede - prøver igen om 15 sekunder ($i/3)"
+            sleep 15
+          done
 
       - name: Koer boligbot
         env:
@@ -48,4 +53,4 @@ jobs:
           git config user.name "boligbot"
           git config user.email "boligbot@users.noreply.github.com"
           git add state/seen.json
-          git diff --cached --quiet || (git commit -m "Opdater sete boliger" && git push)
+          git diff --cached --quiet || (git commit -m "Opdater sete boliger" && (git push || (git pull --rebase && git push)))
