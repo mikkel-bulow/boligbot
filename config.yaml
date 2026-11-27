@@ -47,5 +47,14 @@ auto_tilmelding:
   Kereby: true
   Cityapartment: false
 
+# Kereby beder dig bekræfte nogle udsagn, før du kan bestille en fremvisning.
+# Botten bekræfter kun disse tre (du har sagt, at de passer på dig). Spørger en bolig om
+# noget andet, stopper botten og mailer dig, så du selv kan tage stilling.
+# Botten vælger altid den første ledige dato og det første tidspunkt.
+kereby_bekraeft:
+  ikke_rki: true          # "Jeg bekræfter, at jeg ikke er registreret i RKI."
+  ingen_kaeledyr: true    # "Jeg bekræfter, at jeg ikke har nogen kæledyr."
+  max_personer: true      # "... ikke skal bo mere end N personer" – kun hvis jeres antal (BOLIG_ANTAL_BEBOERE) er højst N
+
 # Sikkerhedsgrænse: højst så mange tilmeldinger pr. kørsel
 max_tilmeldinger_pr_koersel: 3

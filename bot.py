@@ -162,22 +162,38 @@ def goto(page, url):
 
 # ---------------------------------------------------------------- scrapers
 
+KEREBY_STATUS = {"available": "", "reserved": "Reserveret", "completed": "Udlejet"}
+
+
 def scrape_kereby(page):
+    """Kerebys boligkort (Jorato) har postnr., værelser, husleje og status som data-felter på hvert kort.
+    Dem læser vi direkte. Tekst-gætteri gik galt, fordi m² står som "m" + hævet "2"."""
     goto(page, URLS["Kereby"])
+    cards = page.locator("article[data-jorato-card], article.jorato-case-card")
     res = []
-    for url, txt in collect_cards(page, "/bolig/").items():
-        lines = [l for l in txt.splitlines() if l.strip()]
-        status = "Udlejet" if re.search(r"\budlejet\b", txt, re.I) else (
-            "Reserveret" if re.search(r"\breserveret\b", txt, re.I) else "")
-        m_pn = re.search(r"-(\d{4})-", url) or re.search(r"\b(\d{4})\s+(?:København|Frederiksberg|Hellerup|Valby)", txt)
-        m_rent = re.search(r"([\d\.]{4,})\s*kr\.?\s*/\s*md", txt, re.I)
-        m_rooms = re.search(r"(\d+)\s*værelser", txt, re.I) or re.search(r"(\d+)-værelses", txt, re.I)
-        m_m2 = re.search(r"(\d+)\s*m(?:²|2)\b", txt)
-        res.append(dict(udlejer="Kereby", url=url, adresse=guess_address(lines, url),
-                        postnr=to_int(m_pn.group(1)) if m_pn else None,
-                        husleje=to_int(m_rent.group(1)) if m_rent else None,
-                        vaerelser=int(m_rooms.group(1)) if m_rooms else None,
-                        m2=int(m_m2.group(1)) if m_m2 else None, status=status, ledig_fra=""))
+    for i in range(cards.count()):
+        try:
+            d = cards.nth(i).evaluate("""(a) => ({
+                id: a.dataset.cardId || '', state: a.dataset.state || '', zip: a.dataset.zip || '',
+                rooms: a.dataset.rooms || '', rent: a.dataset.rent || '', size: a.dataset.size || '',
+                link: (a.querySelector('a[href*="/bolig/"]') || {}).href || '',
+                text: a.innerText || ''})""")
+        except Exception:
+            continue
+        lines = [l.strip() for l in d["text"].splitlines() if l.strip()]
+        status = KEREBY_STATUS.get(d["state"], d["state"])
+        if not d["state"]:  # data-feltet mangler: fald tilbage på kortets egen tekst
+            status = "Udlejet" if re.search(r"\budlejet\b", d["text"], re.I) else (
+                "Reserveret" if re.search(r"\breserveret\b", d["text"], re.I) else "")
+        if not d["link"] and not status:
+            status = "Uden link"  # et ledigt kort uden link kan vi ikke tilmelde os
+        url = d["link"].split("#")[0].split("?")[0] if d["link"] else f'{URLS["Kereby"]}#kort-{d["id"] or i}'
+        adr_line = next((l for l in lines if re.search(r",\s*\d{4}\s", l)), None)
+        adresse = re.sub(r",\s*\d{4}\s.*$", "", adr_line) if adr_line else guess_address(lines, url)
+        res.append(dict(udlejer="Kereby", url=url, adresse=adresse,
+                        postnr=to_int(d["zip"]), husleje=to_int(d["rent"]),
+                        vaerelser=to_int(d["rooms"]), m2=to_int(d["size"]),
+                        status=status, ledig_fra=""))
     return res
 
 
@@ -422,11 +438,215 @@ def submit_form(page, scope):
     return "usikker", "Formularen er sendt, men siden viste ingen tydelig bekræftelse – tjek skærmbilledet."
 
 
+def dansk_nummer(tlf):
+    """Kereby har landekoden i et felt for sig (+45), så nummeret skal stå uden 45/+45 foran."""
+    d = re.sub(r"\D", "", tlf or "")
+    if d.startswith("0045"):
+        d = d[4:]
+    elif d.startswith("45") and len(d) == 10:
+        d = d[2:]
+    return d
+
+
+# Udsagn, botten må bekræfte hos Kereby. Hele sætningen skal passe, så et udsagn med
+# ekstra betingelser (fx krav om indkomst) ikke bliver bekræftet ved et uheld.
+KEREBY_UDSAGN = [
+    ("ikke_rki", r"jeg bekræfter,? at jeg ikke er registreret i rki\.?"),
+    ("ingen_kaeledyr", r"jeg bekræfter,? at jeg ikke har (?:nogen |nogle )?(?:kæledyr|husdyr)\.?"),
+    ("max_personer", r"jeg bekræfter,? at der ikke skal bo mere end (\d+) personer? i lejemålet\.?"),
+]
+
+
+def kereby_svar(tekst):
+    """True hvis botten må bekræfte udsagnet for Mikkel."""
+    t = re.sub(r"\s+", " ", tekst).strip().lower()
+    tilladt = CFG.get("kereby_bekraeft", {}) or {}
+    for key, pattern in KEREBY_UDSAGN:
+        m = re.fullmatch(pattern, t)
+        if m:
+            if not tilladt.get(key):
+                return False
+            if key == "max_personer":
+                return ME["antal_beboere"] <= int(m.group(1))
+            return True
+    return False
+
+
+def book_kereby(page, item, shot_base):
+    """Kerebys "Book fremvisning" er en guide i 3 trin: dato og tid, kontaktoplysninger og
+    bekræftelser. Botten vælger den første ledige dato og det første tidspunkt."""
+    shots = []
+
+    def shot(navn):
+        p = f"{shot_base}-{navn}.png"
+        try:
+            panel = page.locator(".jorato-case-detail__booking-panel").first
+            if panel.is_visible():
+                panel.screenshot(path=p)
+            else:
+                page.screenshot(path=p)
+        except Exception:
+            page.screenshot(path=p)
+        shots.append(p)
+
+    modal = page.locator("[data-jorato-booking-modal]").first
+    if not page.locator("[data-jorato-booking-modal]").count():
+        page.screenshot(path=f"{shot_base}-side.png")
+        return "fejl", "Fandt ikke Kerebys bookingvindue – siden har måske ændret sig. Ikke sendt.", [f"{shot_base}-side.png"]
+    openers = page.locator("[data-jorato-booking-open]")
+    for i in range(openers.count()):
+        if openers.nth(i).is_visible():
+            openers.nth(i).click(timeout=5000)
+            break
+    else:
+        return "fejl", "Fandt ingen synlig \"Book fremvisning\"-knap. Ikke sendt.", shots
+    modal.wait_for(state="visible", timeout=10000)
+
+    # Trin 1: første ledige dato (hverdage fra om 2 dage) og første tidspunkt
+    cal = modal.locator("[data-jorato-booking-calendar]")
+    dag = None
+    for _ in range(3):
+        days = cal.locator("td:not(.is-disabled):not(.is-empty) button.pika-day")
+        if days.count():
+            dag = days.first
+            break
+        nxt = cal.locator("button.pika-next")
+        if not nxt.count():
+            break
+        nxt.first.click(timeout=3000)
+        page.wait_for_timeout(400)
+    if dag is None:
+        shot("kalender")
+        return "fejl", "Kalenderen viste ingen ledige datoer de næste 3 måneder. Ikke sendt.", shots
+    dato = "{}/{}/{}".format(dag.get_attribute("data-pika-day"), int(dag.get_attribute("data-pika-month")) + 1,
+                             dag.get_attribute("data-pika-year"))
+    dag.click(timeout=3000)  # rigtigt museklik – kalenderen reagerer ikke på JavaScript-klik
+    pill = modal.locator("[data-jorato-booking-time-pills] button").first
+    tid = pill.inner_text().strip()
+    pill.click(timeout=3000)
+    tidspunkt = f"{dato} kl. {tid}"
+    next1 = modal.locator('[data-jorato-booking-next="1"]')
+    page.wait_for_timeout(300)
+    if not next1.is_enabled():
+        shot("kalender")
+        return "fejl", f"Kunne ikke vælge {tidspunkt} i kalenderen. Ikke sendt.", shots
+    next1.click(timeout=5000)
+    modal.locator('[data-jorato-booking-step="2"]').wait_for(state="visible", timeout=5000)
+
+    # Trin 2: kontaktoplysninger
+    tlf = dansk_nummer(ME["telefon"])
+    if not (ME["navn"] and ME["email"] and tlf):
+        return "fejl", "Navn, email eller telefonnummer mangler i GitHub Secrets. Ikke sendt.", shots
+    modal.locator("[data-jorato-booking-name]").fill(ME["navn"], timeout=5000)
+    modal.locator("[data-jorato-booking-email]").fill(ME["email"], timeout=5000)
+    try:
+        modal.locator("[data-jorato-booking-extension]").select_option("45", timeout=3000)
+    except Exception:
+        pass
+    modal.locator("[data-jorato-booking-phone]").fill(tlf, timeout=5000)
+    try:
+        modal.locator("[data-jorato-booking-language]").select_option("danish", timeout=3000)
+    except Exception:
+        pass
+    if ME["besked"]:
+        modal.locator("[data-jorato-booking-comment]").fill(ME["besked"][:500], timeout=5000)
+    # Siden tegner knapperne forfra, når et felt mister fokus. Sker det midt i et klik, bliver
+    # klikket væk. Derfor flytter vi fokus væk fra felterne først.
+    page.evaluate("() => document.activeElement && document.activeElement.blur && document.activeElement.blur()")
+    # Afkrydsningsfeltet er skjult bag en pæn grafik, og etiketten indeholder et link,
+    # så vi sætter flueben direkte på feltet.
+    modal.locator("[data-jorato-booking-privacy]").evaluate("e => { if (!e.checked) e.click(); }")
+    page.wait_for_timeout(500)
+
+    knap2 = modal.locator("[data-jorato-booking-actions-step2] button.jorato-case-detail__booking-btn--primary").first
+    if not knap2.is_enabled():
+        shot("udfyldt")
+        return "fejl", "Kereby godtog ikke kontaktoplysningerne (knappen blev ikke aktiv). Ikke sendt.", shots
+    bekraeftet = []
+    if "næste" in knap2.inner_text().lower():
+        # Trin 3: udsagn der skal bekræftes
+        trin3 = modal.locator('[data-jorato-booking-step="3"]')
+        for _ in range(3):  # klikket kan blive væk, hvis knappen tegnes forfra imens
+            modal.locator("[data-jorato-booking-actions-step2] button.jorato-case-detail__booking-btn--primary").first.click(timeout=5000)
+            try:
+                trin3.wait_for(state="visible", timeout=2000)
+                break
+            except PWTimeout:
+                continue
+        if not trin3.is_visible():
+            shot("udfyldt")
+            return "fejl", "Kom ikke videre til Kerebys bekræftelsestrin. Ikke sendt.", shots
+        spm = modal.locator("[data-jorato-booking-questions] .jorato-case-detail__booking-question")
+        tekster = [spm.nth(i).locator("p").inner_text().strip() for i in range(spm.count())]
+        ukendte = [t for t in tekster if not kereby_svar(t)]
+        if ukendte:
+            shot("spoergsmaal")
+            return ("spoergsmaal", "Kereby beder dig bekræfte noget, botten ikke må svare på for dig: "
+                    + " / ".join(ukendte) + " Tilmeld dig selv via linket, hvis det passer.", shots)
+        for i in range(spm.count()):
+            spm.nth(i).locator('input[type="checkbox"]').evaluate("e => { if (!e.checked) e.click(); }")
+        bekraeftet = tekster
+        page.wait_for_timeout(400)
+        knap = modal.locator("[data-jorato-booking-actions-step3] button.jorato-case-detail__booking-btn--primary").first
+    else:
+        knap = knap2
+
+    knaptekst = knap.inner_text().strip()
+    shot("udfyldt")
+    if "bestil" not in knaptekst.lower():
+        return "fejl", f"Fandt ikke \"Bestil fremvisning\"-knappen (fandt \"{knaptekst}\"). Ikke sendt.", shots
+    if not knap.is_enabled():
+        return "fejl", "\"Bestil fremvisning\" blev ikke aktiv – noget blev ikke godtaget. Ikke sendt.", shots
+    noter = f" Bekræftet for dig: {' '.join(bekraeftet)}" if bekraeftet else ""
+    if DRY_RUN:
+        return "proeve", f"Prøvekørsel: alt er udfyldt til {tidspunkt}, men IKKE sendt.{noter}", shots
+
+    rest = page.evaluate("() => ((window.joratoTemplatesCaseDetail || {}).bookingRestUrl || '')") or ""
+    rest_sti = rest.split("?")[0]
+
+    def er_booking(r):
+        if r.request.method != "POST":
+            return False
+        return r.url.split("?")[0] == rest_sti if rest_sti else "/booking" in r.url
+
+    try:
+        with page.expect_response(er_booking, timeout=30000) as info:
+            knap.click(timeout=5000)
+        svar = info.value
+        try:
+            data = svar.json()
+        except Exception:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+    except PWTimeout:
+        page.wait_for_timeout(2000)
+        shot("efter")
+        return ("usikker", f"Trykkede \"Bestil fremvisning\" ({tidspunkt}), men fik intet svar fra Kereby – "
+                "tjek skærmbilledet, og tilmeld dig selv, hvis du er i tvivl.", shots)
+    page.wait_for_timeout(1500)
+    shot("efter")
+    if svar.ok and data.get("ok"):
+        return ("tilmeldt", f"Fremvisning bestilt til {tidspunkt} (første ledige tid). "
+                f"Kereby vender tilbage og bekræfter tiden.{noter}", shots)
+    fejltekst = str(data.get("message") or "").strip()
+    if not fejltekst:
+        try:
+            el = modal.locator("[data-jorato-booking-error]")
+            fejltekst = el.inner_text().strip() if el.count() and el.first.is_visible() else ""
+        except Exception:
+            pass
+    return ("fejl", f"Kereby afviste tilmeldingen (HTTP {svar.status})"
+            + (f": {fejltekst}" if fejltekst else "") + ". Tilmeld dig selv via linket.", shots)
+
+
 def book(page, item):
     """Udfyld (og send, hvis ikke dry run) Book fremvisning-formularen."""
     goto(page, item["url"])
     shot_base = SHOTS / re.sub(r"[^a-z0-9]+", "-", item["adresse"].lower()).strip("-")
-    # Åbn formularen (Kereby: knap/modal, Cityapartment: anker #kontakt)
+    SHOTS.mkdir(exist_ok=True)
+    if item["udlejer"] == "Kereby":
+        return book_kereby(page, item, shot_base)
+    # Åbn formularen (Cityapartment: anker #kontakt)
     try:
         t = page.get_by_text(re.compile(r"^\s*Book fremvisning\s*$", re.I))
         for i in range(t.count()):
@@ -437,27 +657,17 @@ def book(page, item):
     except Exception:
         pass
 
-    if item["udlejer"] == "Kereby":
-        scope = find_form(page, ["telefon", "sprog"]) or page
-        ok = [fill_field(scope, ["Navn", "Fulde navn", "Name"], ME["navn"]),
-              fill_field(scope, ["Email", "E-mail"], ME["email"]),
-              fill_field(scope, ["Telefonnummer", "Telefon", "Tlf", "Phone"], ME["telefon"])]
-        fill_field(scope, ["Sprog", "Language"], "Dansk", kind="select")
-        if ME["besked"]:
-            fill_field(scope, ["Kommentar", "Besked", "Comment"], ME["besked"])
-    else:
-        scope = find_form(page, ["antal beboere", "hvem skal bo"]) or page
-        antal = "1 person" if ME["antal_beboere"] == 1 else f'{ME["antal_beboere"]} personer'
-        ok = [fill_field(scope, ["Navn", "Name"], ME["navn"]),
-              fill_field(scope, ["Tlf", "Telefon", "Phone"], ME["telefon"]),
-              fill_field(scope, ["Email", "E-mail"], ME["email"]),
-              fill_field(scope, ["Antal beboere"], antal, kind="select"),
-              fill_field(scope, ["Hvem skal bo i lejemålet", "Hvem skal bo"], ME["hvem"], kind="select")]
-        if ME["besked"]:
-            fill_field(scope, ["Besked", "Kommentar", "Message"], ME["besked"])
+    scope = find_form(page, ["antal beboere", "hvem skal bo"]) or page
+    antal = "1 person" if ME["antal_beboere"] == 1 else f'{ME["antal_beboere"]} personer'
+    ok = [fill_field(scope, ["Navn", "Name"], ME["navn"]),
+          fill_field(scope, ["Tlf", "Telefon", "Phone"], ME["telefon"]),
+          fill_field(scope, ["Email", "E-mail"], ME["email"]),
+          fill_field(scope, ["Antal beboere"], antal, kind="select"),
+          fill_field(scope, ["Hvem skal bo i lejemålet", "Hvem skal bo"], ME["hvem"], kind="select")]
+    if ME["besked"]:
+        fill_field(scope, ["Besked", "Kommentar", "Message"], ME["besked"])
     check_consent(scope)
 
-    SHOTS.mkdir(exist_ok=True)
     try:
         (scope if scope is not page else page).screenshot(path=f"{shot_base}-udfyldt.png")
     except Exception:
@@ -593,7 +803,7 @@ def main():
                 enrich_rooms_from_detail(page, item)
             if item["status"]:
                 continue
-            if prev.get("status") in ("tilmeldt", "usikker", "captcha", "fejl"):
+            if prev.get("status") in ("tilmeldt", "usikker", "captcha", "fejl", "spoergsmaal"):
                 continue  # allerede forsøgt i en rigtig kørsel
             if DRY_RUN and prev.get("status") == "proeve":
                 continue
@@ -633,9 +843,10 @@ def main():
                   "fejl": "⛔ Fejl – tilmeld dig selv", "taurus": "📬 Ny hos Taurus",
                   "wanamove": "📬 Ny hos Wanamove",
                   "selv": "🔔 Ny – tilmeld dig selv nu",
-                  "ukendt": "❔ Ny – tjek selv"}
+                  "ukendt": "❔ Ny – tjek selv",
+                  "spoergsmaal": "⛔ Kereby spørger om noget – tilmeld dig selv"}
         n_ok = sum(1 for _, s, _ in report if s == "tilmeldt")
-        n_selv = sum(1 for _, s_, _ in report if s_ in ("selv", "captcha", "fejl", "usikker"))
+        n_selv = sum(1 for _, s_, _ in report if s_ in ("selv", "captcha", "fejl", "usikker", "spoergsmaal"))
         subject = (f"Boligbot: tilmeldt {n_ok} fremvisning(er)" if n_ok else
                    f"Boligbot: ny bolig – tilmeld dig selv nu ({report[0][0]['adresse']})" if n_selv else
                    f"Boligbot: {len(report)} ny(e) bolig(er)") + (" [prøvekørsel]" if DRY_RUN else "")
